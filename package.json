@@ -2,7 +2,7 @@
   "name": "protonav",
   "displayName": "ProtoNav",
   "description": "Proto-first symbol indexing and definition lookup across your workspace.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "local",
   "engines": {
     "vscode": "^1.89.0"

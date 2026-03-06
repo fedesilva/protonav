@@ -28,3 +28,17 @@ npm test
 ```
 
 Press `F5` in VS Code to launch the Extension Development Host.
+
+## Packaging And Install
+
+```bash
+./scripts/build-vsix.sh
+./scripts/install-vsix.sh
+```
+
+`install-vsix.sh` calls `build-vsix.sh` first.
+
+## Versioning
+
+- Version source of truth is `VERSION` (`MAJOR.MINOR.PATCH`).
+- Keep `VERSION` and `package.json` in sync.
