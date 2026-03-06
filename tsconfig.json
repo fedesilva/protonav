@@ -15,7 +15,6 @@
     "sourceMap": true,
     "types": [
       "node",
-      "mocha",
       "vscode"
     ],
     "skipLibCheck": true
