@@ -25,7 +25,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1/4] Checking dependencies"
+echo "[1/5] Checking dependencies"
 if npm ls --depth=0 >/dev/null 2>&1; then
   echo "Dependencies are already installed."
 else
@@ -33,7 +33,15 @@ else
   npm ci
 fi
 
-echo "[2/4] Compiling extension"
+AUDIT_LEVEL="${NPM_AUDIT_LEVEL:-low}"
+echo "[2/5] Running security audit (level: $AUDIT_LEVEL)"
+if ! npm audit --audit-level="$AUDIT_LEVEL"; then
+  echo "Security audit failed. Refusing to package/install without a successful audit." >&2
+  echo "Fix dependency issues or resolve npm registry access, then retry." >&2
+  exit 1
+fi
+
+echo "[3/5] Compiling extension"
 npm run compile
 
 VSIX_FILE="$(node -p "const p=require('./package.json'); p.name + '-' + p.version + '.vsix'")"
@@ -42,10 +50,10 @@ if [[ -f "$VSIX_FILE" ]]; then
   rm -f "$VSIX_FILE"
 fi
 
-echo "[3/4] Packaging VSIX -> $VSIX_FILE"
+echo "[4/5] Packaging VSIX -> $VSIX_FILE"
 npm exec -- @vscode/vsce package --allow-missing-repository --out "$VSIX_FILE"
 
-echo "[4/4] Installing VSIX via $VSCODE_CLI"
+echo "[5/5] Installing VSIX via $VSCODE_CLI"
 "$VSCODE_CLI" --install-extension "$ROOT_DIR/$VSIX_FILE" --force
 
 echo "Installed: $ROOT_DIR/$VSIX_FILE"
