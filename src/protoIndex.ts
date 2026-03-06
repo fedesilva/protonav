@@ -109,26 +109,42 @@ export class ProtoIndex implements vscode.Disposable {
     return ranked;
   }
 
-  findDefinitions(token: string, contextUri?: vscode.Uri, limit = 50): IndexedProtoSymbol[] {
+  findDefinitions(token: string, contextUri?: vscode.Uri, limit = 10): IndexedProtoSymbol[] {
     const normalized = normalizeToken(token);
     if (!normalized) {
       return [];
     }
 
-    const lowered = normalized.toLowerCase();
-    const exactFq = this.symbolsByFq.get(normalized) ?? [];
-    const exactShort = this.symbolsByShort.get(normalized) ?? [];
+    const candidates = buildDefinitionTokenCandidates(normalized);
+    const primaryExactFq = this.symbolsByFq.get(candidates[0]) ?? [];
+    const primaryExactShort = this.symbolsByShort.get(candidates[0]) ?? [];
 
-    const source = exactFq.length > 0 || exactShort.length > 0 ? [...exactFq, ...exactShort] : this.getAllSymbols();
+    if (primaryExactFq.length === 0 && primaryExactShort.length > 12) {
+      // Too ambiguous for "Go to Definition"; let language-native providers handle it.
+      return [];
+    }
+
+    const exactByCandidate = candidates.flatMap((candidate) => [
+      ...(this.symbolsByFq.get(candidate) ?? []),
+      ...(this.symbolsByShort.get(candidate) ?? [])
+    ]);
+    if (exactByCandidate.length === 0) {
+      return [];
+    }
+
+    const source = dedupeEntries(exactByCandidate);
     const uriContextBoosts = this.computeContextBoosts(contextUri);
 
     const ranked = source
       .map((entry) => {
-        const baseScore = scoreDefinitionToken(entry, normalized, lowered);
+        const baseScore = bestDefinitionScore(entry, candidates);
+        if (baseScore <= 0) {
+          return undefined;
+        }
         const contextBoost = uriContextBoosts.get(entry.uri.toString()) ?? 0;
         return { entry, score: baseScore + contextBoost };
       })
-      .filter((row) => row.score > 0)
+      .filter((row): row is { entry: IndexedProtoSymbol; score: number } => row !== undefined)
       .sort((left, right) => {
         if (left.score !== right.score) {
           return right.score - left.score;
@@ -594,11 +610,24 @@ function scoreDefinitionToken(entry: IndexedProtoSymbol, token: string, tokenLow
     score = 860;
   } else if (fqLower.endsWith(`.${tokenLower}`)) {
     score = 810;
-  } else if (token.includes(".") && fqLower.includes(tokenLower)) {
-    score = 700;
+  }
+
+  if (score === 0) {
+    return 0;
   }
 
   return score + typePriorityBoost(entry.symbol.type);
+}
+
+function bestDefinitionScore(entry: IndexedProtoSymbol, tokens: string[]): number {
+  let best = 0;
+  for (const token of tokens) {
+    const score = scoreDefinitionToken(entry, token, token.toLowerCase());
+    if (score > best) {
+      best = score;
+    }
+  }
+  return best;
 }
 
 function typePriorityBoost(type: ParsedProtoSymbol["type"]): number {
@@ -648,6 +677,17 @@ function removeFromBucket(
   }
 }
 
+function dedupeEntries(entries: IndexedProtoSymbol[]): IndexedProtoSymbol[] {
+  const byKey = new Map<string, IndexedProtoSymbol>();
+  for (const entry of entries) {
+    const key = `${entry.uri.toString()}::${entry.symbol.id}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, entry);
+    }
+  }
+  return [...byKey.values()];
+}
+
 function pushToSetMap(map: Map<string, Set<string>>, key: string, value: string): void {
   const existing = map.get(key);
   if (existing) {
@@ -685,6 +725,15 @@ function normalizeImportSpec(value: string): string {
 
 function normalizeToken(token: string): string {
   return token.replace(/^[^A-Za-z_]+|[^A-Za-z0-9_.]+$/g, "").trim();
+}
+
+function buildDefinitionTokenCandidates(normalizedToken: string): string[] {
+  const candidates = new Set<string>([normalizedToken]);
+  const dotIndex = normalizedToken.lastIndexOf(".");
+  if (dotIndex > 0 && dotIndex < normalizedToken.length - 1) {
+    candidates.add(normalizedToken.slice(dotIndex + 1));
+  }
+  return [...candidates];
 }
 
 function toRange(range: TextRange): vscode.Range {
