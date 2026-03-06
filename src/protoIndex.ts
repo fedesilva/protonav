@@ -12,6 +12,17 @@ export interface IndexedProtoSymbol {
   kind: vscode.SymbolKind;
 }
 
+export interface ProtoIndexStatus {
+  isIndexing: boolean;
+  indexedFiles: number;
+  indexedSymbols: number;
+  rootCount: number;
+  focusFolder: string;
+  lastIndexedAt?: number;
+  lastDurationMs?: number;
+  lastWarning?: string;
+}
+
 type PendingChangeKind = "upsert" | "delete";
 
 export class ProtoIndex implements vscode.Disposable {
@@ -20,26 +31,58 @@ export class ProtoIndex implements vscode.Disposable {
   private readonly symbolsById = new Map<string, IndexedProtoSymbol>();
   private readonly symbolsByShort = new Map<string, IndexedProtoSymbol[]>();
   private readonly symbolsByFq = new Map<string, IndexedProtoSymbol[]>();
+  private readonly resolvedImportsByUri = new Map<string, Set<string>>();
+  private readonly importersByUri = new Map<string, Set<string>>();
   private roots: vscode.Uri[] = [];
   private watchers: vscode.FileSystemWatcher[] = [];
   private readonly pendingChanges = new Map<string, PendingChangeKind>();
   private flushTimer: NodeJS.Timeout | undefined;
+  private rebuildInFlight: Promise<void> | undefined;
+
+  private readonly statusEmitter = new vscode.EventEmitter<ProtoIndexStatus>();
+  readonly onDidChangeStatus = this.statusEmitter.event;
+
+  private status: ProtoIndexStatus;
 
   constructor(config: ProtoNavConfig, private readonly logger: ProtoNavLogger) {
     this.config = config;
+    this.status = {
+      isIndexing: false,
+      indexedFiles: 0,
+      indexedSymbols: 0,
+      rootCount: 0,
+      focusFolder: config.focusFolder
+    };
   }
 
   getConfig(): ProtoNavConfig {
     return this.config;
   }
 
+  getStatus(): ProtoIndexStatus {
+    return { ...this.status };
+  }
+
   async initialize(): Promise<void> {
-    await this.rebuild();
+    await this.rebuildNow();
   }
 
   async applyConfig(nextConfig: ProtoNavConfig): Promise<void> {
     this.config = nextConfig;
-    await this.rebuild();
+    this.setStatus({ focusFolder: nextConfig.focusFolder });
+    await this.rebuildNow();
+  }
+
+  rebuildNow(): Promise<void> {
+    if (this.rebuildInFlight) {
+      return this.rebuildInFlight;
+    }
+
+    this.rebuildInFlight = this.rebuild().finally(() => {
+      this.rebuildInFlight = undefined;
+    });
+
+    return this.rebuildInFlight;
   }
 
   searchSymbols(query: string, limit = 300): IndexedProtoSymbol[] {
@@ -66,7 +109,7 @@ export class ProtoIndex implements vscode.Disposable {
     return ranked;
   }
 
-  findDefinitions(token: string, limit = 50): IndexedProtoSymbol[] {
+  findDefinitions(token: string, contextUri?: vscode.Uri, limit = 50): IndexedProtoSymbol[] {
     const normalized = normalizeToken(token);
     if (!normalized) {
       return [];
@@ -77,9 +120,14 @@ export class ProtoIndex implements vscode.Disposable {
     const exactShort = this.symbolsByShort.get(normalized) ?? [];
 
     const source = exactFq.length > 0 || exactShort.length > 0 ? [...exactFq, ...exactShort] : this.getAllSymbols();
+    const uriContextBoosts = this.computeContextBoosts(contextUri);
 
     const ranked = source
-      .map((entry) => ({ entry, score: scoreDefinitionToken(entry, normalized, lowered) }))
+      .map((entry) => {
+        const baseScore = scoreDefinitionToken(entry, normalized, lowered);
+        const contextBoost = uriContextBoosts.get(entry.uri.toString()) ?? 0;
+        return { entry, score: baseScore + contextBoost };
+      })
       .filter((row) => row.score > 0)
       .sort((left, right) => {
         if (left.score !== right.score) {
@@ -121,6 +169,7 @@ export class ProtoIndex implements vscode.Disposable {
       watcher.dispose();
     }
     this.watchers = [];
+    this.statusEmitter.dispose();
   }
 
   private getAllSymbols(): IndexedProtoSymbol[] {
@@ -129,26 +178,48 @@ export class ProtoIndex implements vscode.Disposable {
 
   private async rebuild(): Promise<void> {
     this.logger.info("Rebuilding proto index");
+    const startTime = Date.now();
+    this.setStatus({ isIndexing: true, lastWarning: undefined });
 
     this.roots = await this.resolveIndexRoots();
     this.resetIndex();
     this.refreshWatchers();
+    this.setStatus({ rootCount: this.roots.length });
 
     if (this.roots.length === 0) {
-      this.logger.warn("No index roots resolved; proto index is empty");
+      const warning = "No index roots resolved; proto index is empty.";
+      this.logger.warn(warning);
+      this.setStatus({
+        isIndexing: false,
+        lastWarning: warning,
+        lastIndexedAt: Date.now(),
+        lastDurationMs: Date.now() - startTime
+      });
       return;
     }
 
     const files = await this.discoverProtoFiles(this.roots, this.config.maxIndexFiles);
     if (files.length === this.config.maxIndexFiles) {
-      this.logger.warn(`Reached maxIndexFiles limit (${this.config.maxIndexFiles}).`);
+      const warning = `Reached maxIndexFiles limit (${this.config.maxIndexFiles}).`;
+      this.logger.warn(warning);
+      this.setStatus({ lastWarning: warning });
     }
 
     const batchSize = 64;
     for (let index = 0; index < files.length; index += batchSize) {
       const batch = files.slice(index, index + batchSize);
-      await Promise.all(batch.map(async (uri) => this.indexFile(uri)));
+      await Promise.all(batch.map(async (uri) => this.indexFile(uri, false)));
     }
+
+    this.rebuildImportGraph();
+    this.emitCounts();
+
+    const finishedAt = Date.now();
+    this.setStatus({
+      isIndexing: false,
+      lastIndexedAt: finishedAt,
+      lastDurationMs: finishedAt - startTime
+    });
 
     this.logger.info(`Indexed ${files.length} proto files with ${this.symbolsById.size} symbols.`);
   }
@@ -158,6 +229,9 @@ export class ProtoIndex implements vscode.Disposable {
     this.symbolsById.clear();
     this.symbolsByShort.clear();
     this.symbolsByFq.clear();
+    this.resolvedImportsByUri.clear();
+    this.importersByUri.clear();
+    this.emitCounts();
   }
 
   private refreshWatchers(): void {
@@ -209,6 +283,9 @@ export class ProtoIndex implements vscode.Disposable {
         await this.indexFile(uri);
       }
     }
+
+    this.rebuildImportGraph();
+    this.emitCounts();
   }
 
   private async discoverProtoFiles(roots: vscode.Uri[], maxFiles: number): Promise<vscode.Uri[]> {
@@ -238,20 +315,22 @@ export class ProtoIndex implements vscode.Disposable {
     return [...files.values()];
   }
 
-  private async indexFile(uri: vscode.Uri): Promise<void> {
+  private async indexFile(uri: vscode.Uri, emitStatus = true): Promise<void> {
     try {
       const bytes = await vscode.workspace.fs.readFile(uri);
       const text = new TextDecoder("utf-8").decode(bytes);
       const parsed = parseProto(uri.fsPath, text);
-      this.upsertDocument(uri, parsed);
+      this.upsertDocument(uri, parsed, emitStatus);
     } catch (error) {
-      this.removeFile(uri);
-      this.logger.warn(`Failed to index ${uri.fsPath}: ${toErrorMessage(error)}`);
+      this.removeFile(uri, emitStatus);
+      const warning = `Failed to index ${uri.fsPath}: ${toErrorMessage(error)}`;
+      this.logger.warn(warning);
+      this.setStatus({ lastWarning: warning });
     }
   }
 
-  private upsertDocument(uri: vscode.Uri, parsed: ParsedProtoDocument): void {
-    this.removeFile(uri);
+  private upsertDocument(uri: vscode.Uri, parsed: ParsedProtoDocument, emitStatus: boolean): void {
+    this.removeFile(uri, false);
 
     const uriKey = uri.toString();
     this.documentsByUri.set(uriKey, parsed);
@@ -267,9 +346,14 @@ export class ProtoIndex implements vscode.Disposable {
       pushToBucket(this.symbolsByShort, symbol.shortName, entry);
       pushToBucket(this.symbolsByFq, symbol.fqName, entry);
     }
+
+    if (emitStatus) {
+      this.rebuildImportGraph();
+      this.emitCounts();
+    }
   }
 
-  private removeFile(uri: vscode.Uri): void {
+  private removeFile(uri: vscode.Uri, emitStatus = true): void {
     const uriKey = uri.toString();
     const existing = this.documentsByUri.get(uriKey);
     if (!existing) {
@@ -283,6 +367,11 @@ export class ProtoIndex implements vscode.Disposable {
     }
 
     this.documentsByUri.delete(uriKey);
+
+    if (emitStatus) {
+      this.rebuildImportGraph();
+      this.emitCounts();
+    }
   }
 
   private async resolveIndexRoots(): Promise<vscode.Uri[]> {
@@ -343,6 +432,124 @@ export class ProtoIndex implements vscode.Disposable {
     } catch {
       return false;
     }
+  }
+
+  private computeContextBoosts(contextUri?: vscode.Uri): Map<string, number> {
+    const boosts = new Map<string, number>();
+    if (!contextUri) {
+      return boosts;
+    }
+
+    const contextKey = contextUri.toString();
+
+    if (this.documentsByUri.has(contextKey)) {
+      boosts.set(contextKey, 120);
+    }
+
+    const imported = this.resolvedImportsByUri.get(contextKey);
+    if (imported) {
+      for (const importedKey of imported) {
+        boosts.set(importedKey, Math.max(boosts.get(importedKey) ?? 0, 90));
+      }
+    }
+
+    const importers = this.importersByUri.get(contextKey);
+    if (importers) {
+      for (const importerKey of importers) {
+        boosts.set(importerKey, Math.max(boosts.get(importerKey) ?? 0, 35));
+      }
+    }
+
+    return boosts;
+  }
+
+  private rebuildImportGraph(): void {
+    this.resolvedImportsByUri.clear();
+    this.importersByUri.clear();
+
+    const specToUris = new Map<string, Set<string>>();
+    const knownPaths: Array<{ uriKey: string; pathKey: string }> = [];
+
+    for (const uriKey of this.documentsByUri.keys()) {
+      const uri = vscode.Uri.parse(uriKey);
+      const keys = this.computeImportLookupKeys(uri);
+
+      for (const key of keys) {
+        pushToSetMap(specToUris, key, uriKey);
+        knownPaths.push({ uriKey, pathKey: key });
+      }
+    }
+
+    for (const [uriKey, document] of this.documentsByUri.entries()) {
+      if (document.imports.length === 0) {
+        continue;
+      }
+
+      const resolved = new Set<string>();
+
+      for (const importSpec of document.imports) {
+        const normalizedSpec = normalizeImportSpec(importSpec);
+        const exact = specToUris.get(normalizedSpec);
+        if (exact && exact.size > 0) {
+          for (const uri of exact) {
+            resolved.add(uri);
+          }
+          continue;
+        }
+
+        for (const candidate of knownPaths) {
+          if (isImportSuffixMatch(candidate.pathKey, normalizedSpec)) {
+            resolved.add(candidate.uriKey);
+          }
+        }
+      }
+
+      if (resolved.size === 0) {
+        continue;
+      }
+
+      this.resolvedImportsByUri.set(uriKey, resolved);
+      for (const targetUriKey of resolved) {
+        pushToSetMap(this.importersByUri, targetUriKey, uriKey);
+      }
+    }
+  }
+
+  private computeImportLookupKeys(uri: vscode.Uri): string[] {
+    const keys = new Set<string>();
+    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+
+    for (const folder of workspaceFolders) {
+      const relativeToWorkspace = path.relative(folder.uri.fsPath, uri.fsPath);
+      if (!relativeToWorkspace.startsWith("..") && !path.isAbsolute(relativeToWorkspace)) {
+        keys.add(normalizeImportSpec(relativeToWorkspace));
+      }
+    }
+
+    for (const root of this.roots) {
+      const relativeToRoot = path.relative(root.fsPath, uri.fsPath);
+      if (!relativeToRoot.startsWith("..") && !path.isAbsolute(relativeToRoot)) {
+        keys.add(normalizeImportSpec(relativeToRoot));
+      }
+    }
+
+    keys.add(path.basename(uri.fsPath));
+    return [...keys];
+  }
+
+  private setStatus(update: Partial<ProtoIndexStatus>): void {
+    this.status = {
+      ...this.status,
+      ...update
+    };
+    this.statusEmitter.fire(this.getStatus());
+  }
+
+  private emitCounts(): void {
+    this.setStatus({
+      indexedFiles: this.documentsByUri.size,
+      indexedSymbols: this.symbolsById.size
+    });
   }
 }
 
@@ -441,6 +648,16 @@ function removeFromBucket(
   }
 }
 
+function pushToSetMap(map: Map<string, Set<string>>, key: string, value: string): void {
+  const existing = map.get(key);
+  if (existing) {
+    existing.add(value);
+    return;
+  }
+
+  map.set(key, new Set([value]));
+}
+
 function combineGlobPatterns(patterns: string[]): string | undefined {
   if (patterns.length === 0) {
     return undefined;
@@ -456,6 +673,14 @@ function combineGlobPatterns(patterns: string[]): string | undefined {
 function isSubPath(basePath: string, targetPath: string): boolean {
   const relative = path.relative(basePath, targetPath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isImportSuffixMatch(candidatePath: string, importSpec: string): boolean {
+  return candidatePath === importSpec || candidatePath.endsWith(`/${importSpec}`);
+}
+
+function normalizeImportSpec(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
 function normalizeToken(token: string): string {

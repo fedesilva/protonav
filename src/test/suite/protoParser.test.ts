@@ -39,4 +39,31 @@ suite("protoParser", () => {
     const parsed = parseProto("/tmp/types.proto", content);
     assert.deepStrictEqual(parsed.imports, ["google/protobuf/timestamp.proto"]);
   });
+
+  test("handles rpc option blocks and multiline signatures", () => {
+    const content = [
+      'syntax = "proto3";',
+      "package demo.catalog.v1;",
+      "",
+      "service CatalogService {",
+      "  rpc GetItem (GetItemRequest)",
+      "      returns (GetItemResponse) {",
+      "    option deprecated = true;",
+      "  }",
+      "  rpc ListItems (ListItemsRequest) returns (ListItemsResponse);",
+      "}",
+      ""
+    ].join("\n");
+
+    const parsed = parseProto("/tmp/catalog.proto", content);
+    const rpcNames = parsed.symbols
+      .filter((symbol) => symbol.type === "rpc")
+      .map((symbol) => symbol.fqName)
+      .sort();
+
+    assert.deepStrictEqual(rpcNames, [
+      "demo.catalog.v1.CatalogService.GetItem",
+      "demo.catalog.v1.CatalogService.ListItems"
+    ]);
+  });
 });

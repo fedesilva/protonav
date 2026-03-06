@@ -13,6 +13,7 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:protonav.findProtoSymbol",
+    "onCommand:protonav.rebuildIndex",
     "onLanguage:protobuf"
   ],
   "main": "./out/extension.js",
@@ -21,6 +22,10 @@
       {
         "command": "protonav.findProtoSymbol",
         "title": "ProtoNav: Find Proto Symbol"
+      },
+      {
+        "command": "protonav.rebuildIndex",
+        "title": "ProtoNav: Rebuild Index"
       }
     ],
     "configuration": {

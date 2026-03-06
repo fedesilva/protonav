@@ -32,6 +32,7 @@ export function parseProto(filePath: string, rawText: string): ParsedProtoDocume
 
   let braceDepth = 0;
   let pendingBlock: BlockCandidate | undefined;
+  let pendingRpc: ParsedProtoSymbol | undefined;
   let symbolCounter = 0;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
@@ -71,15 +72,29 @@ export function parseProto(filePath: string, rawText: string): ParsedProtoDocume
 
       symbolCounter += 1;
       symbol.range.endLine = lineIndex;
-      symbol.range.endChar = line.length;
+      symbol.range.endChar = rpcMatch[1].length + rpcMatch[2].length;
       symbols.push(symbol);
+      pendingRpc = symbol;
     }
 
     for (let charIndex = 0; charIndex < line.length; charIndex += 1) {
       const char = line[charIndex];
 
+      if (pendingRpc && char === ";") {
+        pendingRpc.range.endLine = lineIndex;
+        pendingRpc.range.endChar = charIndex + 1;
+        pendingRpc = undefined;
+        continue;
+      }
+
       if (char === "{") {
         braceDepth += 1;
+
+        if (pendingRpc) {
+          openBlocks.push({ openDepth: braceDepth, symbol: pendingRpc });
+          pendingRpc = undefined;
+          continue;
+        }
 
         if (pendingBlock && isMatchingOpenBrace(pendingBlock, lineIndex, charIndex)) {
           const symbol = buildSymbol({
@@ -113,6 +128,10 @@ export function parseProto(filePath: string, rawText: string): ParsedProtoDocume
 
   const finalLineIndex = Math.max(0, lines.length - 1);
   const finalLine = lines[finalLineIndex] ?? "";
+  if (pendingRpc) {
+    pendingRpc.range.endLine = finalLineIndex;
+    pendingRpc.range.endChar = finalLine.length;
+  }
   while (openBlocks.length > 0) {
     const block = openBlocks.pop();
     if (!block) {

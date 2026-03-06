@@ -7,6 +7,7 @@ ProtoNav is a VS Code extension that indexes `.proto` symbols and makes them eas
 - Indexes `message`, `enum`, `service`, and `rpc` symbols from `.proto` files.
 - Adds indexed proto symbols to workspace symbol lookup.
 - Provides a `ProtoNav: Find Proto Symbol` command with fast fuzzy lookup.
+- Provides a `ProtoNav: Rebuild Index` command and status bar indicator (`ProtoNav files/symbols`).
 - Adds cross-language definition lookup that prefers proto matches when available.
 - Supports indexing only a target folder via `protonav.focusFolder`.
 

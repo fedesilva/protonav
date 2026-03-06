@@ -14,10 +14,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const initialConfig = readConfig();
   const logger = new ProtoNavLogger(channel, initialConfig.logLevel);
   const index = new ProtoIndex(initialConfig, logger);
+  const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  statusItem.command = "protonav.rebuildIndex";
+  statusItem.show();
 
-  context.subscriptions.push(channel, index);
+  context.subscriptions.push(channel, index, statusItem);
 
   await index.initialize();
+  renderStatus(statusItem, index.getStatus());
+
+  context.subscriptions.push(
+    index.onDidChangeStatus((status) => {
+      renderStatus(statusItem, status);
+    })
+  );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -60,7 +70,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           return undefined;
         }
 
-        const matches = index.findDefinitions(token);
+        const matches = index.findDefinitions(token, document.uri);
         if (matches.length === 0) {
           return undefined;
         }
@@ -73,6 +83,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("protonav.findProtoSymbol", async () => {
       await showProtoQuickPick(index);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("protonav.rebuildIndex", async () => {
+      try {
+        await index.rebuildNow();
+        const status = index.getStatus();
+        const details = `${status.indexedFiles} files, ${status.indexedSymbols} symbols`;
+        void vscode.window.setStatusBarMessage(`ProtoNav rebuilt: ${details}`, 4000);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`ProtoNav rebuild failed: ${message}`);
+      }
     })
   );
 }
@@ -154,4 +178,22 @@ async function openEntry(entry: IndexedProtoSymbol): Promise<void> {
 
   editor.selection = new vscode.Selection(range.start, range.end);
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+}
+
+function renderStatus(item: vscode.StatusBarItem, status: ReturnType<ProtoIndex["getStatus"]>): void {
+  if (status.isIndexing) {
+    item.text = "$(sync~spin) ProtoNav indexing";
+    item.tooltip = "ProtoNav is rebuilding the proto index.";
+    return;
+  }
+
+  if (status.rootCount === 0) {
+    item.text = "$(warning) ProtoNav no roots";
+    item.tooltip = status.lastWarning || "No valid ProtoNav index roots. Check protonav.focusFolder.";
+    return;
+  }
+
+  item.text = `$(symbol-namespace) ProtoNav ${status.indexedFiles}/${status.indexedSymbols}`;
+  const warningLine = status.lastWarning ? `\nWarning: ${status.lastWarning}` : "";
+  item.tooltip = `Proto files: ${status.indexedFiles}\nSymbols: ${status.indexedSymbols}\nRoots: ${status.rootCount}\nClick to rebuild.${warningLine}`;
 }

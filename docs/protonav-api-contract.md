@@ -47,6 +47,7 @@ Type priority boost:
 4. `rpc`
 
 This enforces "prefer proto message when available" for ambiguous symbols.
+When context is a `.proto` file, direct-imported proto files receive an additional ranking boost.
 
 Workspace symbol search score order:
 
@@ -88,6 +89,8 @@ Workspace symbol search score order:
 - Document symbols: `DocumentSymbolProvider` for `protobuf` documents.
 - Cross-language definitions: `DefinitionProvider` for `scheme: file`; returns proto matches when token resolution succeeds.
 - Command: `protonav.findProtoSymbol` opens a searchable quick pick and jumps to the selected symbol.
+- Command: `protonav.rebuildIndex` forces a full rebuild.
+- Status bar indicator: shows indexing state and file/symbol counts; click triggers rebuild.
 
 ## 5) Indexing Lifecycle
 
@@ -95,3 +98,4 @@ Workspace symbol search score order:
 - Incremental updates through `FileSystemWatcher` (`create`, `change`, `delete`).
 - Debounced update flush to avoid high-frequency reparsing.
 - Respect `maxIndexFiles` cap and `excludeGlobs` filtering.
+- Import graph is rebuilt from `import` statements and used to prefer definitions from directly imported proto files.
