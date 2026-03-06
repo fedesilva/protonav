@@ -1,0 +1,92 @@
+{
+  "name": "protonav",
+  "displayName": "ProtoNav",
+  "description": "Proto-first symbol indexing and definition lookup across your workspace.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.89.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:protonav.findProtoSymbol",
+    "onLanguage:protobuf"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "protonav.findProtoSymbol",
+        "title": "ProtoNav: Find Proto Symbol"
+      }
+    ],
+    "configuration": {
+      "title": "ProtoNav",
+      "properties": {
+        "protonav.preferProtoDefinitions": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, ProtoNav returns matching proto definitions first in Go to Definition results."
+        },
+        "protonav.maxIndexFiles": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 100,
+          "description": "Maximum number of .proto files indexed."
+        },
+        "protonav.excludeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/bazel-*/**"
+          ],
+          "description": "Glob patterns excluded from proto indexing."
+        },
+        "protonav.focusFolder": {
+          "type": "string",
+          "default": "",
+          "description": "Optional folder to index only (relative to workspace root, or absolute path inside a workspace)."
+        },
+        "protonav.logLevel": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
+          "default": "warn",
+          "description": "Log level for ProtoNav output."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile && npm run lint",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.89.0",
+    "@typescript-eslint/eslint-plugin": "^7.5.0",
+    "@typescript-eslint/parser": "^7.5.0",
+    "@vscode/test-electron": "^2.3.9",
+    "eslint": "^8.57.0",
+    "mocha": "^10.3.0",
+    "typescript": "^5.4.3"
+  }
+}
