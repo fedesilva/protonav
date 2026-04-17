@@ -2,8 +2,12 @@
   "name": "protonav",
   "displayName": "ProtoNav",
   "description": "Proto-first symbol indexing and definition lookup across your workspace.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fedesilva/protonav.git"
+  },
   "engines": {
     "vscode": "^1.89.0"
   },
