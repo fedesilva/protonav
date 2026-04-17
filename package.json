@@ -2,7 +2,7 @@
   "name": "protonav",
   "displayName": "ProtoNav",
   "description": "Proto-first symbol indexing and definition lookup across your workspace.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local",
   "engines": {
     "vscode": "^1.89.0"
@@ -82,6 +82,10 @@
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile && npm run lint",
     "test": "node --test out/test/**/*.test.js"
+  },
+  "overrides": {
+    "picomatch": "2.3.2",
+    "undici": "7.24.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
