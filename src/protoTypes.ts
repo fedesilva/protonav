@@ -1,4 +1,4 @@
-export type ProtoSymbolType = "message" | "enum" | "service" | "rpc";
+export type ProtoSymbolType = "message" | "enum" | "service" | "rpc" | "field";
 
 export interface TextRange {
   startLine: number;
@@ -16,6 +16,7 @@ export interface ParsedProtoSymbol {
   type: ProtoSymbolType;
   packageName: string;
   scopePath: string[];
+  ownerFqName?: string;
   containerName?: string;
   range: TextRange;
   selectionRange: TextRange;

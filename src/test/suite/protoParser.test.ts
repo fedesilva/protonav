@@ -66,3 +66,66 @@ void test("handles rpc option blocks and multiline signatures", () => {
     "demo.catalog.v1.CatalogService.ListItems"
   ]);
 });
+
+void test("indexes message fields including map and oneof members", () => {
+  const content = [
+    'syntax = "proto3";',
+    "package demo.orders.v1;",
+    "",
+    "message Order {",
+    "  string id = 1;",
+    "  map<string, Item> items = 2;",
+    "  oneof payment_method {",
+    "    string card_last4 = 3;",
+    "    bytes token = 4;",
+    "  }",
+    "",
+    "  message Item {",
+    "    optional string sku = 1;",
+    "  }",
+    "}",
+    "",
+    "enum Status {",
+    "  STATUS_UNSPECIFIED = 0;",
+    "}",
+    ""
+  ].join("\n");
+
+  const parsed = parseProto("/tmp/order.proto", content);
+  const fields = parsed.symbols
+    .filter((symbol) => symbol.type === "field")
+    .map((symbol) => ({
+      fqName: symbol.fqName,
+      ownerFqName: symbol.ownerFqName,
+      scopePath: symbol.scopePath
+    }))
+    .sort((left, right) => left.fqName.localeCompare(right.fqName));
+
+  assert.deepStrictEqual(fields, [
+    {
+      fqName: "demo.orders.v1.Order.card_last4",
+      ownerFqName: "demo.orders.v1.Order",
+      scopePath: ["Order"]
+    },
+    {
+      fqName: "demo.orders.v1.Order.id",
+      ownerFqName: "demo.orders.v1.Order",
+      scopePath: ["Order"]
+    },
+    {
+      fqName: "demo.orders.v1.Order.Item.sku",
+      ownerFqName: "demo.orders.v1.Order.Item",
+      scopePath: ["Order", "Item"]
+    },
+    {
+      fqName: "demo.orders.v1.Order.items",
+      ownerFqName: "demo.orders.v1.Order",
+      scopePath: ["Order"]
+    },
+    {
+      fqName: "demo.orders.v1.Order.token",
+      ownerFqName: "demo.orders.v1.Order",
+      scopePath: ["Order"]
+    }
+  ]);
+});

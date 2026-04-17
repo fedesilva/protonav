@@ -119,7 +119,7 @@ export class ProtoIndex implements vscode.Disposable {
     const primaryExactFq = this.symbolsByFq.get(candidates[0]) ?? [];
     const primaryExactShort = this.symbolsByShort.get(candidates[0]) ?? [];
 
-    if (primaryExactFq.length === 0 && primaryExactShort.length > 12) {
+    if (primaryExactFq.length === 0 && isDefinitionLookupAmbiguous(primaryExactShort)) {
       // Too ambiguous for "Go to Definition"; let language-native providers handle it.
       return [];
     }
@@ -160,6 +160,33 @@ export class ProtoIndex implements vscode.Disposable {
       }
       if (unique.size >= limit) {
         break;
+      }
+    }
+
+    return [...unique.values()];
+  }
+
+  findFieldDefinitions(messageFqNames: string[], fieldCandidates: string[], limit = 10): IndexedProtoSymbol[] {
+    const unique = new Map<string, IndexedProtoSymbol>();
+
+    for (const messageFqName of [...new Set(messageFqNames)]) {
+      for (const fieldCandidate of [...new Set(fieldCandidates)]) {
+        const matches = this.symbolsByFq.get(`${messageFqName}.${fieldCandidate}`) ?? [];
+
+        for (const entry of matches) {
+          if (entry.symbol.type !== "field") {
+            continue;
+          }
+
+          const key = `${entry.uri.toString()}::${entry.symbol.id}`;
+          if (!unique.has(key)) {
+            unique.set(key, entry);
+          }
+
+          if (unique.size >= limit) {
+            return [...unique.values()];
+          }
+        }
       }
     }
 
@@ -597,19 +624,20 @@ function scoreDefinitionToken(entry: IndexedProtoSymbol, token: string, tokenLow
   const fqName = entry.symbol.fqName;
   const shortLower = shortName.toLowerCase();
   const fqLower = fqName.toLowerCase();
+  const isField = entry.symbol.type === "field";
 
   let score = 0;
 
   if (fqName === token) {
-    score = 1000;
+      score = 1000;
   } else if (shortName === token) {
-    score = 940;
+    score = isField ? 760 : 940;
   } else if (fqLower === tokenLower) {
-    score = 900;
+    score = isField ? 960 : 900;
   } else if (shortLower === tokenLower) {
-    score = 860;
+    score = isField ? 720 : 860;
   } else if (fqLower.endsWith(`.${tokenLower}`)) {
-    score = 810;
+    score = isField ? 780 : 810;
   }
 
   if (score === 0) {
@@ -640,9 +668,25 @@ function typePriorityBoost(type: ParsedProtoSymbol["type"]): number {
       return 20;
     case "rpc":
       return 10;
+    case "field":
+      return 0;
     default:
       return 0;
   }
+}
+
+function isDefinitionLookupAmbiguous(entries: IndexedProtoSymbol[]): boolean {
+  const nonFieldCount = entries.filter((entry) => entry.symbol.type !== "field").length;
+  if (nonFieldCount > 12) {
+    return true;
+  }
+
+  if (nonFieldCount > 0) {
+    return false;
+  }
+
+  const fieldCount = entries.length;
+  return fieldCount > 4;
 }
 
 function pushToBucket(

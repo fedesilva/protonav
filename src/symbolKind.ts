@@ -11,6 +11,8 @@ export function symbolKindForType(type: ProtoSymbolType): vscode.SymbolKind {
       return vscode.SymbolKind.Interface;
     case "rpc":
       return vscode.SymbolKind.Method;
+    case "field":
+      return vscode.SymbolKind.Field;
     default:
       return vscode.SymbolKind.Object;
   }

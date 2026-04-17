@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { buildDocumentSymbols } from "./documentSymbols";
 import { readConfig } from "./config";
 import { ProtoNavLogger } from "./logging";
+import { resolveMemberNavigation } from "./memberNavigation/resolver";
+import { createSourceDocument } from "./memberNavigation/shared";
 import { parseProto } from "./protoParser";
 import { IndexedProtoSymbol, ProtoIndex } from "./protoIndex";
 
@@ -63,6 +65,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       provideDefinition: (document, position, _token) => {
         if (!index.getConfig().preferProtoDefinitions) {
           return undefined;
+        }
+
+        const memberNavigationResult = resolveMemberDefinition(document, position, index);
+        if (memberNavigationResult) {
+          return memberNavigationResult;
         }
 
         const token = extractToken(document, position);
@@ -196,4 +203,38 @@ function renderStatus(item: vscode.StatusBarItem, status: ReturnType<ProtoIndex[
   item.text = `$(symbol-namespace) ProtoNav ${status.indexedFiles}/${status.indexedSymbols}`;
   const warningLine = status.lastWarning ? `\nWarning: ${status.lastWarning}` : "";
   item.tooltip = `Proto files: ${status.indexedFiles}\nSymbols: ${status.indexedSymbols}\nRoots: ${status.rootCount}\nClick to rebuild.${warningLine}`;
+}
+
+function resolveMemberDefinition(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  index: ProtoIndex
+): vscode.Location[] | undefined {
+  const resolution = resolveMemberNavigation(
+    createSourceDocument(document.getText(), document.languageId),
+    { line: position.line, character: position.character },
+    {
+      findMessageTypes: (typeToken) =>
+        index
+          .findDefinitions(typeToken, document.uri, 12)
+          .filter((entry) => entry.symbol.type === "message")
+          .map((entry) => ({
+            fqName: entry.symbol.fqName,
+            data: entry
+          })),
+      findFields: (messageFqNames, fieldNames) =>
+        index.findFieldDefinitions(messageFqNames, fieldNames, 12).map((entry) => ({
+          key: `${entry.uri.toString()}::${entry.symbol.id}`,
+          messageFqName: entry.symbol.ownerFqName ?? "",
+          fieldName: entry.symbol.shortName,
+          data: entry
+        }))
+    }
+  );
+
+  if (!resolution) {
+    return undefined;
+  }
+
+  return resolution.matches.map((match) => index.toLocation(match.data as IndexedProtoSymbol));
 }

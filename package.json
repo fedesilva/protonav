@@ -2,7 +2,7 @@
   "name": "protonav",
   "displayName": "ProtoNav",
   "description": "Proto-first symbol indexing and definition lookup across your workspace.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "local",
   "license": "Apache-2.0",
   "repository": {
