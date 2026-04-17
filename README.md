@@ -38,6 +38,17 @@ Press `F5` in VS Code to launch the Extension Development Host.
 
 `install-vsix.sh` calls `build-vsix.sh` first.
 
+## GitHub Release
+
+The repository includes [`.github/workflows/release-vsix.yml`](./.github/workflows/release-vsix.yml), which:
+
+- builds the extension with `./scripts/build-vsix.sh`
+- publishes the generated `.vsix` as a GitHub Release asset
+- runs automatically when you push a `vMAJOR.MINOR.PATCH` tag
+- can also be started manually from `workflow_dispatch`
+
+The release tag must match the version in `VERSION` and `package.json`.
+
 ## Versioning
 
 - Version source of truth is `VERSION` (`MAJOR.MINOR.PATCH`).
